@@ -1,0 +1,36 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: build
+        run: cargo build --release
+
+      - name: package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item target\release\tinythis.exe dist\tinythis-windows-x86_64.exe
+          $hash = (Get-FileHash -Algorithm SHA256 dist\tinythis-windows-x86_64.exe).Hash.ToLower()
+          "$hash  tinythis-windows-x86_64.exe" | Out-File -Encoding ascii dist\tinythis-windows-x86_64.exe.sha256
+
+      - name: upload
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/tinythis-windows-x86_64.exe
+            dist/tinythis-windows-x86_64.exe.sha256
+
