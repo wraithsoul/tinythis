@@ -1,8 +1,10 @@
 mod assets;
 mod cli;
+mod confirm;
 mod error;
 mod exec;
 mod paths;
+mod prefs;
 mod presets;
 mod process;
 mod self_install;
@@ -21,6 +23,8 @@ fn main() -> std::process::ExitCode {
 }
 
 fn real_main() -> crate::error::Result<()> {
+    use std::io::IsTerminal;
+
     let cli = crate::cli::Cli::parse();
 
     if cli.command.is_some() && !cli.inputs.is_empty() {
@@ -36,15 +40,31 @@ fn real_main() -> crate::error::Result<()> {
     match cli.command {
         Some(command) => crate::cli::run(command),
         None => {
+            let mut initial_status: Option<String> = None;
             if cfg!(windows) {
-                if let Err(e) = crate::assets::ffmpeg::ensure_installed(false) {
-                    eprintln!("auto-setup failed (assets): {e}");
-                }
-                if let Err(e) = crate::self_install::install(false) {
-                    eprintln!("auto-setup failed (path): {e}");
+                let interactive = std::io::stdin().is_terminal();
+
+                if interactive {
+                    let bin_dir = crate::paths::tinythis_bin_dir()?;
+                    if !crate::self_install::user_path_contains(&bin_dir)? {
+                        if crate::prefs::path_opted_out()? {
+                            // user previously declined. `tinythis setup path` can override.
+                        } else if crate::confirm::confirm(
+                            "add tinythis to your PATH for quick use?",
+                        )? {
+                            let _ = crate::self_install::install(false)?;
+                            let _ = crate::prefs::set_path_opted_out(false);
+                        } else {
+                            let _ = crate::prefs::set_path_opted_out(true);
+                            initial_status = Some(
+                                "path: skipped (run `tinythis setup path` to install later)"
+                                    .to_string(),
+                            );
+                        }
+                    }
                 }
             }
-            crate::tui::run()
+            crate::tui::run(initial_status)
         }
     }
 }

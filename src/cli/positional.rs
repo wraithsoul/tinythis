@@ -27,17 +27,19 @@ pub fn run(cli: &super::args::Cli) -> Result<()> {
         inputs.push(p.clone());
     }
 
-    let bins = crate::assets::ffmpeg::ensure_installed(false)?;
+    let (bins, source) = crate::assets::ffmpeg::resolve_ffmpeg()?.ok_or_else(|| {
+        TinythisError::InvalidArgs(
+            "ffmpeg not available; run `tinythis setup` or place ffmpeg.exe next to tinythis.exe"
+                .to_string(),
+        )
+    })?;
+    if source == crate::assets::ffmpeg::FfmpegSource::NearExe {
+        println!("local mode: using ffmpeg next to tinythis.exe");
+    }
 
     for (i, input) in inputs.iter().enumerate() {
         let out_path = crate::exec::compress::build_output_path(input, preset)?;
-        let audio_codec = crate::exec::compress::probe_audio_codec(&bins.ffprobe, input)?;
-        let mut args = crate::exec::compress::build_ffmpeg_args(
-            input,
-            &out_path,
-            preset,
-            audio_codec.as_deref(),
-        );
+        let mut args = crate::exec::compress::build_ffmpeg_args(input, &out_path, preset);
         args.extend([OsString::from("-progress"), OsString::from("pipe:1")]);
 
         println!(

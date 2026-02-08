@@ -3,6 +3,7 @@ use std::sync::mpsc::{Receiver, TryRecvError};
 
 use crossterm::event::KeyEvent;
 
+use crate::assets::ffmpeg::{FfmpegBinaries, FfmpegSource};
 use crate::exec::compress::SelectedFile;
 use crate::presets::Preset;
 use crate::update::UpdateInfo;
@@ -24,6 +25,9 @@ pub struct App {
     update: Option<UpdateInfo>,
     update_rx: Option<Receiver<UpdateMsg>>,
     update_prompt_from: Screen,
+
+    ffmpeg: Option<FfmpegBinaries>,
+    ffmpeg_source: Option<FfmpegSource>,
 }
 
 impl App {
@@ -31,7 +35,7 @@ impl App {
         Self {
             should_quit: false,
             screen: Screen::Landing,
-            preset: Preset::Quality,
+            preset: Preset::Balanced,
             files: Vec::new(),
             review_selected: None,
             seen: std::collections::HashSet::new(),
@@ -42,6 +46,8 @@ impl App {
             update: None,
             update_rx: None,
             update_prompt_from: Screen::Landing,
+            ffmpeg: None,
+            ffmpeg_source: None,
         }
     }
 
@@ -81,12 +87,29 @@ impl App {
         self.update.as_ref()
     }
 
+    pub fn ffmpeg(&self) -> Option<&FfmpegBinaries> {
+        self.ffmpeg.as_ref()
+    }
+
+    pub fn is_local_mode(&self) -> bool {
+        self.ffmpeg_source == Some(FfmpegSource::NearExe)
+    }
+
+    pub fn set_ffmpeg(&mut self, bins: FfmpegBinaries, source: FfmpegSource) {
+        self.ffmpeg = Some(bins);
+        self.ffmpeg_source = Some(source);
+    }
+
     pub fn quit(&mut self) {
         self.should_quit = true;
     }
 
     pub fn set_error(&mut self, message: String) {
         self.error = Some(message);
+    }
+
+    pub fn set_status_message(&mut self, message: Option<String>) {
+        self.status = message;
     }
 
     pub fn set_screen(&mut self, screen: Screen) {

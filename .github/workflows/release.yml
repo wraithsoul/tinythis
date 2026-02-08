@@ -23,14 +23,12 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Copy-Item target\release\tinythis.exe dist\tinythis-windows-x86_64.exe
-          $hash = (Get-FileHash -Algorithm SHA256 dist\tinythis-windows-x86_64.exe).Hash.ToLower()
-          "$hash  tinythis-windows-x86_64.exe" | Out-File -Encoding ascii dist\tinythis-windows-x86_64.exe.sha256
+          Copy-Item target\release\tinythis.exe dist\tinythis.exe
+          Compress-Archive -Path dist\tinythis.exe -DestinationPath dist\tinythis-x86_64-pc-windows-msvc.zip -Force
+          Remove-Item dist\tinythis.exe
 
       - name: upload
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/tinythis-windows-x86_64.exe
-            dist/tinythis-windows-x86_64.exe.sha256
-
+            dist/tinythis-x86_64-pc-windows-msvc.zip

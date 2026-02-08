@@ -14,7 +14,52 @@ const FFMPEG_ZIP_URL: &str = "https://github.com/BtbN/FFmpeg-Builds/releases/lat
 #[derive(Debug, Clone)]
 pub struct FfmpegBinaries {
     pub ffmpeg: PathBuf,
-    pub ffprobe: PathBuf,
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum FfmpegSource {
+    NearExe,
+    Bundled,
+}
+
+pub fn find_installed() -> Result<Option<FfmpegBinaries>> {
+    if !cfg!(windows) {
+        return Err(TinythisError::UnsupportedPlatform(std::env::consts::OS));
+    }
+
+    let ffmpeg = crate::paths::ffmpeg_exe_path()?;
+    if ffmpeg.is_file() {
+        return Ok(Some(FfmpegBinaries { ffmpeg }));
+    }
+    Ok(None)
+}
+
+pub fn find_near_exe() -> Result<Option<FfmpegBinaries>> {
+    if !cfg!(windows) {
+        return Err(TinythisError::UnsupportedPlatform(std::env::consts::OS));
+    }
+
+    let exe = std::env::current_exe()?;
+    let dir = exe.parent().unwrap_or_else(|| Path::new("."));
+    Ok(find_near_dir(dir))
+}
+
+pub fn resolve_ffmpeg() -> Result<Option<(FfmpegBinaries, FfmpegSource)>> {
+    if let Some(bins) = find_near_exe()? {
+        return Ok(Some((bins, FfmpegSource::NearExe)));
+    }
+    if let Some(bins) = find_installed()? {
+        return Ok(Some((bins, FfmpegSource::Bundled)));
+    }
+    Ok(None)
+}
+
+fn find_near_dir(dir: &Path) -> Option<FfmpegBinaries> {
+    let ffmpeg = dir.join("ffmpeg.exe");
+    if ffmpeg.is_file() {
+        return Some(FfmpegBinaries { ffmpeg });
+    }
+    None
 }
 
 pub fn ensure_installed(force: bool) -> Result<FfmpegBinaries> {
@@ -35,10 +80,9 @@ pub fn ensure_installed(force: bool) -> Result<FfmpegBinaries> {
     lock_file.lock_exclusive()?;
 
     let ffmpeg = crate::paths::ffmpeg_exe_path()?;
-    let ffprobe = crate::paths::ffprobe_exe_path()?;
 
-    if !force && ffmpeg.is_file() && ffprobe.is_file() {
-        return Ok(FfmpegBinaries { ffmpeg, ffprobe });
+    if !force && ffmpeg.is_file() {
+        return Ok(FfmpegBinaries { ffmpeg });
     }
 
     let client = reqwest::blocking::Client::builder()
@@ -51,21 +95,18 @@ pub fn ensure_installed(force: bool) -> Result<FfmpegBinaries> {
     zip_tmp.as_file_mut().flush()?;
     zip_tmp.as_file_mut().sync_all()?;
 
-    extract_executables(zip_tmp.path(), &install_dir, &ffmpeg, &ffprobe)?;
+    extract_executables(zip_tmp.path(), &install_dir, &ffmpeg)?;
 
     let mut missing = Vec::new();
     if !ffmpeg.is_file() {
         missing.push(ffmpeg.clone());
     }
-    if !ffprobe.is_file() {
-        missing.push(ffprobe.clone());
-    }
     if !missing.is_empty() {
         return Err(TinythisError::InstallIncomplete { missing });
     }
 
-    verify_installed(&ffmpeg, &ffprobe)?;
-    Ok(FfmpegBinaries { ffmpeg, ffprobe })
+    verify_installed(&ffmpeg)?;
+    Ok(FfmpegBinaries { ffmpeg })
 }
 
 pub fn uninstall_assets() -> Result<()> {
@@ -76,11 +117,32 @@ pub fn uninstall_assets() -> Result<()> {
     let install_dir = crate::paths::ffmpeg_dir()?;
     let lock_path = install_dir.join(".install.lock");
     let ffmpeg = crate::paths::ffmpeg_exe_path()?;
-    let ffprobe = crate::paths::ffprobe_exe_path()?;
 
-    remove_file_if_exists(&ffmpeg)?;
-    remove_file_if_exists(&ffprobe)?;
-    remove_file_if_exists(&lock_path)?;
+    {
+        let lock_file = match OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .truncate(false)
+            .open(&lock_path)
+        {
+            Ok(f) => Some(f),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(e) => return Err(e.into()),
+        };
+        if let Some(lock_file) = lock_file.as_ref() {
+            lock_file.lock_exclusive()?;
+        }
+
+        remove_file_if_exists(&ffmpeg)?;
+    }
+
+    match std::fs::remove_file(&lock_path) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {}
+        Err(e) => return Err(e.into()),
+    }
 
     match std::fs::remove_dir(&install_dir) {
         Ok(()) => {}
@@ -100,10 +162,9 @@ fn remove_file_if_exists(path: &Path) -> Result<()> {
     }
 }
 
-fn verify_installed(ffmpeg: &Path, ffprobe: &Path) -> Result<()> {
+fn verify_installed(ffmpeg: &Path) -> Result<()> {
     let args = [OsString::from("-version")];
     crate::process::run::run_capture(ffmpeg, &args)?;
-    crate::process::run::run_capture(ffprobe, &args)?;
     Ok(())
 }
 
@@ -148,17 +209,11 @@ fn download_zip(client: &reqwest::blocking::Client, url: &str, out: &mut File) -
     Ok(())
 }
 
-fn extract_executables(
-    zip_path: &Path,
-    install_dir: &Path,
-    ffmpeg_dest: &Path,
-    ffprobe_dest: &Path,
-) -> Result<()> {
+fn extract_executables(zip_path: &Path, install_dir: &Path, ffmpeg_dest: &Path) -> Result<()> {
     let zip_file = File::open(zip_path)?;
     let mut zip = zip::ZipArchive::new(zip_file)?;
 
     let mut ffmpeg_found = false;
-    let mut ffprobe_found = false;
 
     for i in 0..zip.len() {
         let mut entry = zip.by_index(i)?;
@@ -170,23 +225,15 @@ fn extract_executables(
         if ends_with_path_ci(&name, "bin/ffmpeg.exe") {
             write_zip_entry_to_path(&mut entry, install_dir, ffmpeg_dest)?;
             ffmpeg_found = true;
-        } else if ends_with_path_ci(&name, "bin/ffprobe.exe") {
-            write_zip_entry_to_path(&mut entry, install_dir, ffprobe_dest)?;
-            ffprobe_found = true;
         }
 
-        if ffmpeg_found && ffprobe_found {
+        if ffmpeg_found {
             break;
         }
     }
 
     if !ffmpeg_found {
         return Err(TinythisError::AssetEntryMissing { name: "ffmpeg.exe" });
-    }
-    if !ffprobe_found {
-        return Err(TinythisError::AssetEntryMissing {
-            name: "ffprobe.exe",
-        });
     }
 
     Ok(())
@@ -217,5 +264,20 @@ fn persist_overwrite(tmp: NamedTempFile, dest: &Path) -> Result<()> {
                 .map_err(|e| TinythisError::Io(e.error))
         }
         Err(e) => Err(e.error.into()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn find_near_dir_requires_ffmpeg() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(find_near_dir(dir.path()).is_none());
+
+        std::fs::write(dir.path().join("ffmpeg.exe"), b"x").unwrap();
+        let bins = find_near_dir(dir.path()).unwrap();
+        assert!(bins.ffmpeg.ends_with("ffmpeg.exe"));
     }
 }

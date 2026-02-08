@@ -1,5 +1,3 @@
-use std::io::Write;
-
 use crate::error::Result;
 
 pub fn run(args: super::args::UpdateArgs) -> Result<()> {
@@ -24,11 +22,5 @@ pub fn run(args: super::args::UpdateArgs) -> Result<()> {
 }
 
 fn confirm_update() -> Result<bool> {
-    print!("update now? [y/N] ");
-    std::io::stdout().flush()?;
-
-    let mut s = String::new();
-    std::io::stdin().read_line(&mut s)?;
-    let s = s.trim().to_ascii_lowercase();
-    Ok(s == "y" || s == "yes")
+    crate::confirm::confirm("update now?")
 }

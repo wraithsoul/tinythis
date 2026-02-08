@@ -9,9 +9,12 @@ use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifier
 
 use crate::error::Result;
 
-pub fn run() -> Result<()> {
-    let mut session = terminal::TerminalSession::enter()?;
+pub fn run(initial_status: Option<String>) -> Result<()> {
     let mut app = app::App::new();
+    app.set_status_message(initial_status);
+    preflight_ffmpeg(&mut app)?;
+
+    let mut session = terminal::TerminalSession::enter()?;
     let (update_tx, update_rx) = std::sync::mpsc::channel::<app::UpdateMsg>();
     app.set_update_rx(update_rx);
     std::thread::spawn(move || {
@@ -53,6 +56,26 @@ pub fn run() -> Result<()> {
     }
 
     session.restore()?;
+    Ok(())
+}
+
+fn preflight_ffmpeg(app: &mut app::App) -> Result<()> {
+    use std::io::IsTerminal;
+
+    if let Some((bins, source)) = crate::assets::ffmpeg::resolve_ffmpeg()? {
+        app.set_ffmpeg(bins, source);
+        return Ok(());
+    }
+
+    if !std::io::stdin().is_terminal() {
+        return Ok(());
+    }
+
+    if crate::confirm::confirm("download ffmpeg assets now? (required to compress)")? {
+        let bins = crate::assets::ffmpeg::ensure_installed(false)?;
+        app.set_ffmpeg(bins, crate::assets::ffmpeg::FfmpegSource::Bundled);
+    }
+
     Ok(())
 }
 
@@ -117,13 +140,44 @@ fn handle_key(
                 return Ok(());
             }
 
-            let bins = match session.suspend(|| crate::assets::ffmpeg::ensure_installed(false)) {
-                Ok(b) => b,
-                Err(e) => {
-                    app.set_error(format!("{e}"));
-                    app.set_screen(app::Screen::Error);
-                    return Ok(());
-                }
+            let bins = match app.ffmpeg().cloned() {
+                Some(b) => b,
+                None => match session.suspend(|| {
+                    use std::io::IsTerminal;
+
+                    if let Some((bins, source)) = crate::assets::ffmpeg::resolve_ffmpeg()? {
+                        return Ok(Some((bins, source)));
+                    }
+
+                    if !std::io::stdin().is_terminal() {
+                        return Ok(None);
+                    }
+
+                    if !crate::confirm::confirm("download ffmpeg assets now?")? {
+                        return Ok(None);
+                    }
+
+                    let bins = crate::assets::ffmpeg::ensure_installed(false)?;
+                    Ok(Some((bins, crate::assets::ffmpeg::FfmpegSource::Bundled)))
+                }) {
+                    Ok(Some((bins, source))) => {
+                        app.set_ffmpeg(bins.clone(), source);
+                        bins
+                    }
+                    Ok(None) => {
+                        app.set_error(
+                            "ffmpeg not available; run `tinythis setup` or place ffmpeg.exe next to tinythis.exe"
+                                .to_string(),
+                        );
+                        app.set_screen(app::Screen::Error);
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        app.set_error(format!("{e}"));
+                        app.set_screen(app::Screen::Error);
+                        return Ok(());
+                    }
+                },
             };
 
             let files: Vec<crate::exec::compress::SelectedFile> = app.files().to_vec();
@@ -133,7 +187,7 @@ fn handle_key(
             app.set_worker(rx, files.len());
 
             std::thread::spawn(move || {
-                run_worker(tx, bins.ffmpeg, bins.ffprobe, files, preset);
+                run_worker(tx, bins.ffmpeg, files, preset);
             });
         }
 
@@ -220,7 +274,6 @@ fn hex_val(b: u8) -> Option<u8> {
 fn run_worker(
     tx: std::sync::mpsc::Sender<app::WorkerMsg>,
     ffmpeg: std::path::PathBuf,
-    ffprobe: std::path::PathBuf,
     files: Vec<crate::exec::compress::SelectedFile>,
     preset: crate::presets::Preset,
 ) {
@@ -239,13 +292,7 @@ fn run_worker(
 
         let res: crate::error::Result<()> = (|| {
             let out_path = crate::exec::compress::build_output_path(&f.path, preset)?;
-            let audio_codec = crate::exec::compress::probe_audio_codec(&ffprobe, &f.path)?;
-            let args = crate::exec::compress::build_ffmpeg_args(
-                &f.path,
-                &out_path,
-                preset,
-                audio_codec.as_deref(),
-            );
+            let args = crate::exec::compress::build_ffmpeg_args(&f.path, &out_path, preset);
             let mut args = args;
             args.extend([
                 std::ffi::OsString::from("-progress"),

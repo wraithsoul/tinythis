@@ -38,34 +38,7 @@ pub fn build_output_path(input: &Path, preset: Preset) -> Result<PathBuf> {
     unreachable!("the loop returns once it finds a free name")
 }
 
-pub fn probe_audio_codec(ffprobe: &Path, input: &Path) -> Result<Option<String>> {
-    let args = [
-        OsString::from("-hide_banner"),
-        OsString::from("-v"),
-        OsString::from("error"),
-        OsString::from("-select_streams"),
-        OsString::from("a:0"),
-        OsString::from("-show_entries"),
-        OsString::from("stream=codec_name"),
-        OsString::from("-of"),
-        OsString::from("default=nw=1:nk=1"),
-        input.as_os_str().to_owned(),
-    ];
-
-    let out = crate::process::run::run_capture(ffprobe, &args)?;
-    let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    if s.is_empty() {
-        return Ok(None);
-    }
-    Ok(Some(s))
-}
-
-pub fn build_ffmpeg_args(
-    input: &Path,
-    output: &Path,
-    preset: Preset,
-    audio_codec: Option<&str>,
-) -> Vec<OsString> {
+pub fn build_ffmpeg_args(input: &Path, output: &Path, preset: Preset) -> Vec<OsString> {
     let mut args = Vec::<OsString>::new();
 
     args.extend([
@@ -90,20 +63,12 @@ pub fn build_ffmpeg_args(
         OsString::from("+faststart"),
     ]);
 
-    match audio_codec {
-        None => {}
-        Some(codec) if codec.eq_ignore_ascii_case("aac") => {
-            args.extend([OsString::from("-c:a"), OsString::from("copy")]);
-        }
-        Some(_) => {
-            args.extend([
-                OsString::from("-c:a"),
-                OsString::from("aac"),
-                OsString::from("-b:a"),
-                OsString::from(crate::presets::audio_bitrate(preset)),
-            ]);
-        }
-    }
+    args.extend([
+        OsString::from("-c:a"),
+        OsString::from("aac"),
+        OsString::from("-b:a"),
+        OsString::from(crate::presets::audio_bitrate(preset)),
+    ]);
 
     args.push(output.as_os_str().to_owned());
     args

@@ -23,8 +23,8 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    /// download and install ffmpeg/ffprobe assets and add tinythis to your PATH
-    Setup(SetupArgs),
+    /// download and install ffmpeg assets and add tinythis to your PATH
+    Setup(SetupCmd),
 
     /// check GitHub Releases and update tinythis
     Update(UpdateArgs),
@@ -33,14 +33,36 @@ pub enum Command {
     Uninstall(UninstallArgs),
 
     #[command(hide = true)]
-    SelfReplace(SelfReplaceArgs),
+    SelfRemove(SelfRemoveArgs),
 }
+
+#[derive(Debug, Args)]
+pub struct SetupCmd {
+    #[command(flatten)]
+    pub args: SetupArgs,
+
+    #[command(subcommand)]
+    pub command: Option<SetupSubcommand>,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum SetupSubcommand {
+    /// add tinythis to your user PATH
+    Path(SetupPathArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct SetupPathArgs {}
 
 #[derive(Debug, Args)]
 pub struct SetupArgs {
     /// re-download and re-install even if already installed
     #[arg(long)]
     pub force: bool,
+
+    /// skip the PATH prompt and add tinythis to your user PATH (when missing)
+    #[arg(long)]
+    pub yes: bool,
 }
 
 #[derive(Debug, Args)]
@@ -54,22 +76,18 @@ pub struct UpdateArgs {
 pub struct UninstallArgs {}
 
 #[derive(Debug, Args)]
-pub struct SelfReplaceArgs {
+pub struct SelfRemoveArgs {
     /// parent pid to wait for
     #[arg(long)]
     pub pid: u32,
 
-    /// path to the staged exe to install
+    /// bin directory to remove
     #[arg(long)]
-    pub src: PathBuf,
+    pub bin_dir: PathBuf,
 
-    /// destination exe path to replace
+    /// app root directory to remove if empty
     #[arg(long)]
-    pub dst: PathBuf,
-
-    /// relaunch tinythis after replacing
-    #[arg(long)]
-    pub relaunch: bool,
+    pub app_root_dir: PathBuf,
 }
 
 #[derive(Debug, Copy, Clone, ValueEnum)]

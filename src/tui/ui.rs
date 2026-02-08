@@ -26,6 +26,12 @@ pub fn draw(frame: &mut Frame, _app: &App) {
         Screen::Done => draw_done(frame, _app),
         Screen::Error => draw_error(frame, _app),
     }
+
+    if _app.is_local_mode() {
+        render_banner(frame, "local mode", Color::Rgb(255, 165, 0));
+    } else if _app.ffmpeg().is_none() {
+        render_banner(frame, "ffmpeg missing", Color::Red);
+    }
 }
 
 fn centered_rect(area: Rect, content_height: u16) -> Rect {
@@ -66,6 +72,25 @@ fn render_top_left(frame: &mut Frame, lines: Vec<Line>) {
         .alignment(ratatui::layout::Alignment::Left)
         .wrap(Wrap { trim: false });
     frame.render_widget(paragraph, rect);
+}
+
+fn render_banner(frame: &mut Frame, text: &str, color: Color) {
+    let area = frame.area();
+    if area.height == 0 {
+        return;
+    }
+
+    let rect = Rect {
+        x: area.x,
+        y: area.y,
+        width: area.width,
+        height: 1,
+    };
+    let style = Style::default().fg(color);
+    let p = Paragraph::new(Text::from(vec![Line::styled(text, style)]))
+        .alignment(ratatui::layout::Alignment::Center)
+        .wrap(Wrap { trim: true });
+    frame.render_widget(p, rect);
 }
 
 fn draw_landing(frame: &mut Frame, app: &App) {

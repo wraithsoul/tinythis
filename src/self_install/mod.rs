@@ -3,10 +3,9 @@ use std::path::{Path, PathBuf};
 use crate::error::{Result, TinythisError};
 
 #[derive(Debug, Clone)]
-pub struct InstallOutcome {
+pub struct ExeInstallOutcome {
     pub bin_dir: PathBuf,
     pub installed_exe: PathBuf,
-    pub path_was_updated: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -14,7 +13,24 @@ pub struct UninstallOutcome {
     pub path_was_updated: bool,
 }
 
-pub fn install(force: bool) -> Result<InstallOutcome> {
+#[derive(Debug, Clone)]
+pub struct SelfRemoveArgs {
+    pub pid: u32,
+    pub bin_dir: PathBuf,
+    pub app_root_dir: PathBuf,
+}
+
+pub fn install(force: bool) -> Result<ExeInstallOutcome> {
+    if !cfg!(windows) {
+        return Err(TinythisError::UnsupportedPlatform(std::env::consts::OS));
+    }
+
+    let exe = install_exe(force)?;
+    let _ = ensure_user_path_contains(&exe.bin_dir)?;
+    Ok(exe)
+}
+
+pub fn install_exe(force: bool) -> Result<ExeInstallOutcome> {
     if !cfg!(windows) {
         return Err(TinythisError::UnsupportedPlatform(std::env::consts::OS));
     }
@@ -32,13 +48,24 @@ pub fn install(force: bool) -> Result<InstallOutcome> {
         }
     }
 
-    let path_was_updated = windows_path::ensure_user_path_contains(&bin_dir)?;
-
-    Ok(InstallOutcome {
+    Ok(ExeInstallOutcome {
         bin_dir,
         installed_exe,
-        path_was_updated,
     })
+}
+
+pub fn user_path_contains(bin_dir: &Path) -> Result<bool> {
+    if !cfg!(windows) {
+        return Err(TinythisError::UnsupportedPlatform(std::env::consts::OS));
+    }
+    windows_path::user_path_contains(bin_dir)
+}
+
+pub fn ensure_user_path_contains(bin_dir: &Path) -> Result<bool> {
+    if !cfg!(windows) {
+        return Err(TinythisError::UnsupportedPlatform(std::env::consts::OS));
+    }
+    windows_path::ensure_user_path_contains(bin_dir)
 }
 
 pub fn uninstall() -> Result<UninstallOutcome> {
@@ -51,6 +78,34 @@ pub fn uninstall() -> Result<UninstallOutcome> {
     let path_was_updated = windows_path::remove_user_path_entry(&bin_dir)?;
 
     Ok(UninstallOutcome { path_was_updated })
+}
+
+pub fn remove_bin_dir(bin_dir: &Path) -> Result<()> {
+    match std::fs::remove_dir_all(bin_dir) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e.into()),
+    }
+}
+
+pub fn remove_app_root_if_empty(app_root_dir: &Path) -> Result<()> {
+    match std::fs::remove_dir(app_root_dir) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::DirectoryNotEmpty => Ok(()),
+        Err(e) => Err(e.into()),
+    }
+}
+
+pub fn run_self_remove(args: SelfRemoveArgs) -> Result<()> {
+    if !cfg!(windows) {
+        return Err(TinythisError::UnsupportedPlatform(std::env::consts::OS));
+    }
+
+    wait_for_pid_exit_best_effort(args.pid, std::time::Duration::from_secs(60));
+    let _ = remove_bin_dir(&args.bin_dir);
+    let _ = remove_app_root_if_empty(&args.app_root_dir);
+    Ok(())
 }
 
 fn copy_self_to(src: &Path, dest: &Path, force: bool) -> Result<()> {
@@ -98,6 +153,29 @@ fn same_path(a: &Path, b: &Path) -> bool {
         .eq_ignore_ascii_case(&b.to_string_lossy())
 }
 
+#[cfg(windows)]
+fn wait_for_pid_exit_best_effort(pid: u32, timeout: std::time::Duration) {
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Threading::{OpenProcess, WaitForSingleObject};
+
+    if pid == 0 {
+        return;
+    }
+
+    const PROCESS_SYNCHRONIZE: u32 = 0x0010_0000;
+    let handle = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, pid) };
+    if handle.is_null() {
+        return;
+    }
+
+    let ms = timeout.as_millis().min(u32::MAX as u128) as u32;
+    let _ = unsafe { WaitForSingleObject(handle, ms) };
+    let _ = unsafe { CloseHandle(handle) };
+}
+
+#[cfg(not(windows))]
+fn wait_for_pid_exit_best_effort(_pid: u32, _timeout: std::time::Duration) {}
+
 mod windows_path {
     use std::path::Path;
 
@@ -124,6 +202,12 @@ mod windows_path {
         write_user_path_entries(&entries, value_type)?;
         broadcast_env_change();
         Ok(true)
+    }
+
+    pub fn user_path_contains(bin_dir: &Path) -> Result<bool> {
+        let (entries, _value_type) = read_user_path_entries()?;
+        let norm_bin = normalize_entry(bin_dir.to_string_lossy().as_ref());
+        Ok(entries.iter().any(|e| normalize_entry(e) == norm_bin))
     }
 
     pub fn remove_user_path_entry(bin_dir: &Path) -> Result<bool> {

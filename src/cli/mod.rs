@@ -1,5 +1,6 @@
 mod args;
 mod cmd_setup;
+mod cmd_setup_path;
 mod cmd_uninstall;
 mod cmd_update;
 mod positional;
@@ -10,15 +11,17 @@ use crate::error::Result;
 
 pub fn run(command: args::Command) -> Result<()> {
     match command {
-        args::Command::Setup(args) => cmd_setup::run(args),
+        args::Command::Setup(setup) => match setup.command {
+            Some(args::SetupSubcommand::Path(args)) => cmd_setup_path::run(args),
+            None => cmd_setup::run(setup.args),
+        },
         args::Command::Update(args) => cmd_update::run(args),
         args::Command::Uninstall(args) => cmd_uninstall::run(args),
-        args::Command::SelfReplace(args) => {
-            crate::update::run_self_replace(crate::update::SelfReplaceArgs {
+        args::Command::SelfRemove(args) => {
+            crate::self_install::run_self_remove(crate::self_install::SelfRemoveArgs {
                 pid: args.pid,
-                src: args.src,
-                dst: args.dst,
-                relaunch: args.relaunch,
+                bin_dir: args.bin_dir,
+                app_root_dir: args.app_root_dir,
             })
         }
     }

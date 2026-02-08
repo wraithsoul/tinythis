@@ -17,6 +17,9 @@ pub enum TinythisError {
     #[error(transparent)]
     Zip(#[from] zip::result::ZipError),
 
+    #[error(transparent)]
+    SelfUpdate(#[from] self_update::errors::Error),
+
     #[error("expected asset entry not found in zip: {name}")]
     AssetEntryMissing { name: &'static str },
 

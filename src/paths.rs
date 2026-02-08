@@ -25,10 +25,6 @@ pub fn ffmpeg_exe_path() -> Result<PathBuf> {
     Ok(ffmpeg_dir()?.join("ffmpeg.exe"))
 }
 
-pub fn ffprobe_exe_path() -> Result<PathBuf> {
-    Ok(ffmpeg_dir()?.join("ffprobe.exe"))
-}
-
 pub fn tinythis_bin_dir() -> Result<PathBuf> {
     Ok(app_root_dir()?.join("bin"))
 }
