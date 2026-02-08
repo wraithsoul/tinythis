@@ -45,9 +45,8 @@ Supported extensions: `.mp4`, `.mov`, `.avi`, `.webm`, `.ogv`, `.asx`, `.mpeg`, 
 Compress one or more files:
 
 ```powershell
-tinythis --mode balanced input1.mp4 input2.mov
-tinythis --mode quality  input.mp4
-tinythis --mode speed    input.mp4
+tinythis input1.mp4
+tinythis balanced input1.mp4 input2.mp4  # or: quality, speed
 ```
 
 Note: CLI compression will not prompt to download ffmpeg. If ffmpeg isn't available (near `tinythis.exe` or installed assets), run `tinythis setup`.

@@ -27,12 +27,6 @@ fn real_main() -> crate::error::Result<()> {
 
     let cli = crate::cli::Cli::parse();
 
-    if cli.command.is_some() && !cli.inputs.is_empty() {
-        return Err(crate::error::TinythisError::InvalidArgs(
-            "positional inputs cannot be combined with subcommands".to_string(),
-        ));
-    }
-
     if !cli.inputs.is_empty() {
         return crate::cli::run_positional(&cli);
     }

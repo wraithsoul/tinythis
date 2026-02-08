@@ -1,21 +1,28 @@
 use std::path::PathBuf;
 
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::{Args, Parser, Subcommand};
+
+fn parse_supported_input(s: &str) -> std::result::Result<PathBuf, String> {
+    let path = PathBuf::from(s);
+    if crate::exec::input::is_supported_video(&path) {
+        Ok(path)
+    } else {
+        Err("unsupported input extension".to_string())
+    }
+}
 
 #[derive(Debug, Parser)]
 #[command(
     name = "tinythis",
     version,
-    about = "tinythis! - a lightweight ffmpeg wrapper"
+    about = "tinythis! - a lightweight ffmpeg wrapper",
+    args_conflicts_with_subcommands = true,
+    subcommand_precedence_over_arg = true
 )]
 pub struct Cli {
     /// input files to compress (when no subcommand is used)
-    #[arg(value_name = "INPUT")]
+    #[arg(value_name = "INPUT", value_parser = parse_supported_input)]
     pub inputs: Vec<PathBuf>,
-
-    /// compression mode for positional inputs (defaults to balanced)
-    #[arg(long, value_enum)]
-    pub mode: Option<ModeArg>,
 
     #[command(subcommand)]
     pub command: Option<Command>,
@@ -23,6 +30,15 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
+    /// compress using the balanced preset
+    Balanced(CompressArgs),
+
+    /// compress using the quality preset
+    Quality(CompressArgs),
+
+    /// compress using the speed preset
+    Speed(CompressArgs),
+
     /// download and install ffmpeg assets and add tinythis to your PATH
     Setup(SetupCmd),
 
@@ -53,6 +69,13 @@ pub enum SetupSubcommand {
 
 #[derive(Debug, Args)]
 pub struct SetupPathArgs {}
+
+#[derive(Debug, Args)]
+pub struct CompressArgs {
+    /// input files to compress
+    #[arg(value_name = "INPUT", required = true, value_parser = parse_supported_input)]
+    pub inputs: Vec<PathBuf>,
+}
 
 #[derive(Debug, Args)]
 pub struct SetupArgs {
@@ -90,19 +113,65 @@ pub struct SelfRemoveArgs {
     pub app_root_dir: PathBuf,
 }
 
-#[derive(Debug, Copy, Clone, ValueEnum)]
-pub enum ModeArg {
-    Quality,
-    Balanced,
-    Speed,
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-impl ModeArg {
-    pub fn to_preset(self) -> crate::presets::Preset {
-        match self {
-            ModeArg::Quality => crate::presets::Preset::Quality,
-            ModeArg::Balanced => crate::presets::Preset::Balanced,
-            ModeArg::Speed => crate::presets::Preset::Speed,
+    #[test]
+    fn parses_no_args() {
+        let cli = Cli::try_parse_from(["tinythis"]).unwrap();
+        assert!(cli.inputs.is_empty());
+        assert!(cli.command.is_none());
+    }
+
+    #[test]
+    fn parses_positional_inputs_default() {
+        let cli = Cli::try_parse_from(["tinythis", "a.mp4", "b.mov"]).unwrap();
+        assert_eq!(
+            cli.inputs,
+            vec![PathBuf::from("a.mp4"), PathBuf::from("b.mov")]
+        );
+        assert!(cli.command.is_none());
+    }
+
+    #[test]
+    fn parses_preset_subcommand() {
+        let cli = Cli::try_parse_from(["tinythis", "balanced", "a.mp4", "b.mov"]).unwrap();
+        match cli.command {
+            Some(Command::Balanced(args)) => {
+                assert_eq!(
+                    args.inputs,
+                    vec![PathBuf::from("a.mp4"), PathBuf::from("b.mov")]
+                );
+            }
+            other => panic!("unexpected command: {other:?}"),
         }
+    }
+
+    #[test]
+    fn legacy_mode_flag_still_parses() {
+        assert!(Cli::try_parse_from(["tinythis", "--mode", "quality", "a.mp4"]).is_err());
+    }
+
+    #[test]
+    fn rejects_unexpected_args_for_setup() {
+        assert!(Cli::try_parse_from(["tinythis", "setup", "a.mp4"]).is_err());
+    }
+
+    #[test]
+    fn rejects_mode_flag_with_preset_subcommand() {
+        assert!(
+            Cli::try_parse_from(["tinythis", "balanced", "--mode", "quality", "a.mp4"]).is_err()
+        );
+    }
+
+    #[test]
+    fn requires_inputs_for_preset_subcommands() {
+        assert!(Cli::try_parse_from(["tinythis", "speed"]).is_err());
+    }
+
+    #[test]
+    fn rejects_positional_inputs_with_subcommand() {
+        assert!(Cli::try_parse_from(["tinythis", "a.mp4", "setup"]).is_err());
     }
 }

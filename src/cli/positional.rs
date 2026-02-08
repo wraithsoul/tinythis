@@ -3,30 +3,9 @@ use std::io::Write;
 use std::path::PathBuf;
 
 use crate::error::{Result, TinythisError};
+use crate::presets::Preset;
 
-pub fn run(cli: &super::args::Cli) -> Result<()> {
-    if cli.inputs.is_empty() {
-        return Err(TinythisError::InvalidArgs(
-            "no input files provided".to_string(),
-        ));
-    }
-
-    let preset = cli
-        .mode
-        .map(|m| m.to_preset())
-        .unwrap_or(crate::presets::Preset::Balanced);
-
-    let mut inputs = Vec::<PathBuf>::new();
-    for p in &cli.inputs {
-        if !crate::exec::input::is_supported_video(p) {
-            return Err(TinythisError::InvalidArgs(format!(
-                "unsupported input extension: {}",
-                p.display()
-            )));
-        }
-        inputs.push(p.clone());
-    }
-
+pub fn run(preset: Preset, inputs: &[PathBuf]) -> Result<()> {
     let (bins, source) = crate::assets::ffmpeg::resolve_ffmpeg()?.ok_or_else(|| {
         TinythisError::InvalidArgs(
             "ffmpeg not available; run `tinythis setup` or place ffmpeg.exe next to tinythis.exe"
