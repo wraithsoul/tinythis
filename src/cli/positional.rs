@@ -20,9 +20,7 @@ pub fn run(preset: Preset, inputs: &[PathBuf], use_gpu: bool) -> Result<()> {
                 return Err(err());
             }
 
-            if !crate::confirm::confirm(
-                "ffmpeg not available. run `tinythis setup` now?",
-            )? {
+            if !crate::confirm::confirm("ffmpeg not available. run `tinythis setup` now?")? {
                 return Err(err());
             }
 
