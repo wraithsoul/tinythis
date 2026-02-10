@@ -1,31 +1,39 @@
 # tinythis!
 
-tinythis! is a lightweight `ffmpeg` wrapper for Windows. It ships three stable presets:
+tinythis! is a lightweight `ffmpeg` wrapper for windows. it ships three stable presets:
 
 - `quality`: best quality, slower processing
 - `balanced`: good quality, moderate processing
 - `speed`: lower quality, faster processing
 
-## Usage
+## setup (ffmpeg)
 
-### TUI
+tinythis needs `ffmpeg.exe` to compress.
 
-Run with no arguments:
+sources:
+
+- `local mode`: `ffmpeg.exe` next to `tinythis.exe`
+- `bundled`: downloaded assets installed by `tinythis setup`
+
+install assets:
+
+```powershell
+tinythis setup
+tinythis setup --force
+```
+
+## usage (tui)
+
+run with no arguments:
 
 ```powershell
 tinythis
 ```
 
-- if `ffmpeg.exe` is next to `tinythis.exe`, tinythis will use it automatically (`local mode`)
-- otherwise, if bundled ffmpeg assets are installed, tinythis will use those
-- otherwise, tinythis will prompt to download ffmpeg assets (required to compress)
-
 Status banner:
 
 - `local mode`: using `ffmpeg.exe` next to `tinythis.exe`
 - `ffmpeg missing`: no ffmpeg available (place `ffmpeg.exe` next to `tinythis.exe` or run `tinythis setup`)
-
-Separately, tinythis may prompt to add itself to your user PATH for quick use. If you decline, it remembers that preference (you can enable it later with `tinythis setup path`).
 
 Keys:
 
@@ -34,58 +42,69 @@ Keys:
 - up/down: select a file
 - backspace: remove selected file
 - left/right: change mode
+- `g`: toggle gpu (use gpu)
 - enter: compress
 - esc: back
 - `q`: quit
 
-Supported extensions: `.mp4`, `.mov`, `.avi`, `.webm`, `.ogv`, `.asx`, `.mpeg`, `.m4v`, `.wmv`, `.mpg`.
+supported extensions: `.mp4`, `.mov`, `.avi`, `.webm`, `.ogv`, `.asx`, `.mpeg`, `.m4v`, `.wmv`, `.mpg`.
 
-### CLI
+## usage (cli)
 
-Compress one or more files:
+compress one or more files:
 
 ```powershell
 tinythis input1.mp4
 tinythis balanced input1.mp4 input2.mp4  # or: quality, speed
 ```
 
-Note: CLI compression will not prompt to download ffmpeg. If ffmpeg isn't available (near `tinythis.exe` or installed assets), run `tinythis setup`.
+## path (optional)
 
-Download/install `ffmpeg` assets:
-
-```powershell
-tinythis setup
-tinythis setup --force
-```
-
-`setup` can also add `tinythis` to your user PATH (it may prompt).
-Use `--yes` to skip the prompt and add it to PATH (when missing):
+`setup` can also add `tinythis` to your user path (it may prompt).
+use `--yes` to skip the prompt and add it to path (when missing):
 
 ```powershell
 tinythis setup --yes
 ```
 
-If you previously declined, you can install PATH later with:
+if you previously declined, you can install path later with:
 
 ```powershell
 tinythis setup path
 ```
 
-Update tinythis from GitHub Releases:
+## update
+
+update tinythis from github releases:
 
 ```powershell
 tinythis update
 tinythis update --yes
 ```
 
-Remove assets and PATH entry:
+remove assets and path entry:
 
 ```powershell
 tinythis uninstall
 ```
 
-## Outputs
+## outputs
 
 Outputs are written next to the input file as:
 
 `<stem>.tinythis.<preset>.mp4` (and `.2`, `.3`, ... if needed)
+
+## benchmarks
+
+rough numbers from our runs on a **100 MB** source (higher vmaf is better):
+
+| preset    | cpu vmaf    | gpu vmaf    | cpu size (MB) | gpu size (MB) |
+|----------|------------:|------------:|--------------:|--------------:|
+| quality  | 98.363088   | 97.386657   | 46.603        | 46.317        |
+| balanced | 94.836812   | 94.226505   | 26.645        | 29.151        |
+| speed    | 81.750592   | 84.372124   | 13.799        | 15.257        |
+
+notes:
+
+- test: `vmaf_fps: 60/1`
+- sizes are final output file sizes for each preset
