@@ -1,17 +1,39 @@
 use std::ffi::OsString;
-use std::io::Write;
+use std::io::{IsTerminal, Write};
 use std::path::PathBuf;
 
 use crate::error::{Result, TinythisError};
 use crate::presets::Preset;
 
 pub fn run(preset: Preset, inputs: &[PathBuf], use_gpu: bool) -> Result<()> {
-    let (bins, source) = crate::assets::ffmpeg::resolve_ffmpeg()?.ok_or_else(|| {
-        TinythisError::InvalidArgs(
-            "ffmpeg not available; run `tinythis setup` or place ffmpeg.exe next to tinythis.exe"
-                .to_string(),
-        )
-    })?;
+    let (bins, source) = match crate::assets::ffmpeg::resolve_ffmpeg()? {
+        Some((bins, source)) => (bins, source),
+        None => {
+            let err = || {
+                TinythisError::InvalidArgs(
+                    "ffmpeg not available; run `tinythis setup` or place ffmpeg.exe next to tinythis.exe"
+                        .to_string(),
+                )
+            };
+
+            if !std::io::stdin().is_terminal() {
+                return Err(err());
+            }
+
+            if !crate::confirm::confirm(
+                "ffmpeg not available. run `tinythis setup` now?",
+            )? {
+                return Err(err());
+            }
+
+            super::cmd_setup::run(super::args::SetupArgs {
+                force: false,
+                yes: false,
+            })?;
+
+            crate::assets::ffmpeg::resolve_ffmpeg()?.ok_or_else(err)?
+        }
+    };
     if source == crate::assets::ffmpeg::FfmpegSource::NearExe {
         println!("local mode: using ffmpeg next to tinythis.exe");
     }
