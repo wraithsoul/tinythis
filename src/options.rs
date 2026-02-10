@@ -47,25 +47,20 @@ fn load_from_app_root(app_root: &Path) -> Result<Options> {
     let legacy = legacy_path_optout_file(app_root);
 
     let mut o = Options::default();
-    let mut saw_gpu = false;
     let mut saw_path_optout = false;
-    let mut needs_write = false;
 
     match std::fs::read_to_string(&p) {
         Ok(s) => {
             let parsed = parse_options_toml(&s)?;
             if let Some(v) = parsed.gpu {
                 o.gpu = v;
-                saw_gpu = true;
             }
             if let Some(v) = parsed.path_optout {
                 o.path_optout = v;
                 saw_path_optout = true;
             }
         }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            needs_write = true;
-        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(e) => return Err(e.into()),
     }
 
@@ -77,24 +72,6 @@ fn load_from_app_root(app_root: &Path) -> Result<Options> {
 
     if legacy_present && !saw_path_optout {
         o.path_optout = true;
-        saw_path_optout = true;
-        needs_write = true;
-    }
-
-    if !saw_gpu || !saw_path_optout {
-        needs_write = true;
-    }
-
-    if needs_write {
-        save_to_app_root(app_root, &o)?;
-    }
-
-    if legacy_present {
-        match std::fs::remove_file(&legacy) {
-            Ok(()) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => return Err(e.into()),
-        }
     }
 
     Ok(o)
@@ -140,12 +117,13 @@ fn parse_options_toml(s: &str) -> Result<ParsedOptions> {
     enum Section {
         Root,
         Path,
+        Other,
     }
     let mut section = Section::Root;
 
     for (idx, raw) in s.lines().enumerate() {
-        let line = raw.trim();
-        if line.is_empty() || line.starts_with('#') {
+        let line = strip_inline_comment(raw).trim();
+        if line.is_empty() {
             continue;
         }
 
@@ -153,7 +131,7 @@ fn parse_options_toml(s: &str) -> Result<ParsedOptions> {
             let name = line[1..line.len() - 1].trim();
             section = match name {
                 "path" => Section::Path,
-                _ => Section::Root,
+                _ => Section::Other,
             };
             continue;
         }
@@ -162,22 +140,27 @@ fn parse_options_toml(s: &str) -> Result<ParsedOptions> {
             continue;
         };
         let key = k.trim();
-        let val = v.trim();
-
-        let b = match parse_bool(val) {
-            Some(b) => b,
-            None => {
-                return Err(TinythisError::InvalidArgs(format!(
-                    "invalid options.toml on line {}: expected boolean for `{key}`",
-                    idx + 1
-                )));
-            }
+        let target = match (section, key) {
+            (Section::Root, "gpu") => Some("gpu"),
+            (Section::Root, "path.optout") => Some("path.optout"),
+            (Section::Path, "optout") => Some("path.optout"),
+            _ => None,
+        };
+        let Some(target) = target else {
+            continue;
         };
 
-        match (section, key) {
-            (Section::Root, "gpu") => out.gpu = Some(b),
-            (Section::Root, "path.optout") => out.path_optout = Some(b),
-            (Section::Path, "optout") => out.path_optout = Some(b),
+        let val = strip_inline_comment(v).trim();
+        let b = parse_bool(val).ok_or_else(|| {
+            TinythisError::InvalidArgs(format!(
+                "invalid options.toml on line {}: expected boolean for `{target}`",
+                idx + 1
+            ))
+        })?;
+
+        match target {
+            "gpu" => out.gpu = Some(b),
+            "path.optout" => out.path_optout = Some(b),
             _ => {}
         }
     }
@@ -185,11 +168,21 @@ fn parse_options_toml(s: &str) -> Result<ParsedOptions> {
     Ok(out)
 }
 
+fn strip_inline_comment(s: &str) -> &str {
+    match s.split_once('#') {
+        Some((before, _)) => before,
+        None => s,
+    }
+}
+
 fn parse_bool(s: &str) -> Option<bool> {
-    match s {
-        "true" | "True" | "TRUE" => Some(true),
-        "false" | "False" | "FALSE" => Some(false),
-        _ => None,
+    let s = s.trim();
+    if s.eq_ignore_ascii_case("true") {
+        Some(true)
+    } else if s.eq_ignore_ascii_case("false") {
+        Some(false)
+    } else {
+        None
     }
 }
 
@@ -209,7 +202,20 @@ mod tests {
     }
 
     #[test]
-    fn load_migrates_legacy_path_optout_file() {
+    fn parses_inline_comments_and_ignores_unknown_keys() {
+        let a = parse_options_toml("gpu = true # enable nvenc\nunknown = \"value\"\n").unwrap();
+        assert_eq!(a.gpu, Some(true));
+        assert_eq!(a.path_optout, None);
+    }
+
+    #[test]
+    fn ignores_known_keys_in_other_sections() {
+        let a = parse_options_toml("[other]\ngpu = true\n").unwrap();
+        assert_eq!(a.gpu, None);
+    }
+
+    #[test]
+    fn load_reads_legacy_path_optout_file_without_writing() {
         let dir = tempfile::tempdir().unwrap();
         let app_root = dir.path();
 
@@ -225,8 +231,7 @@ mod tests {
             }
         );
 
-        assert!(!app_root.join("path.optout").exists());
-        let s = std::fs::read_to_string(app_root.join("options.toml")).unwrap();
-        assert!(s.contains("path.optout = true"));
+        assert!(app_root.join("path.optout").exists());
+        assert!(!app_root.join("options.toml").exists());
     }
 }
