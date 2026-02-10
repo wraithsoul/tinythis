@@ -38,7 +38,12 @@ pub fn build_output_path(input: &Path, preset: Preset) -> Result<PathBuf> {
     unreachable!("the loop returns once it finds a free name")
 }
 
-pub fn build_ffmpeg_args(input: &Path, output: &Path, preset: Preset) -> Vec<OsString> {
+pub fn build_ffmpeg_args(
+    input: &Path,
+    output: &Path,
+    preset: Preset,
+    use_gpu: bool,
+) -> Vec<OsString> {
     let mut args = Vec::<OsString>::new();
 
     args.extend([
@@ -54,7 +59,8 @@ pub fn build_ffmpeg_args(input: &Path, output: &Path, preset: Preset) -> Vec<OsS
         OsString::from("0:a?"),
     ]);
 
-    args.extend(crate::presets::ffmpeg_video_args(preset));
+    let codec = if use_gpu { "h264_nvenc" } else { "libx264" };
+    args.extend(crate::presets::ffmpeg_video_args(preset, codec));
 
     args.extend([
         OsString::from("-pix_fmt"),

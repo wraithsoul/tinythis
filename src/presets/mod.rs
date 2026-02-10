@@ -17,11 +17,11 @@ impl Preset {
     }
 }
 
-pub fn ffmpeg_video_args(preset: Preset) -> Vec<OsString> {
+pub fn ffmpeg_video_args(preset: Preset, codec: &str) -> Vec<OsString> {
     match preset {
         Preset::Quality => vec![
             OsString::from("-c:v"),
-            OsString::from("libx264"),
+            OsString::from(codec),
             OsString::from("-preset"),
             OsString::from("slow"),
             OsString::from("-crf"),
@@ -29,7 +29,7 @@ pub fn ffmpeg_video_args(preset: Preset) -> Vec<OsString> {
         ],
         Preset::Balanced => vec![
             OsString::from("-c:v"),
-            OsString::from("libx264"),
+            OsString::from(codec),
             OsString::from("-preset"),
             OsString::from("medium"),
             OsString::from("-crf"),
@@ -37,7 +37,7 @@ pub fn ffmpeg_video_args(preset: Preset) -> Vec<OsString> {
         ],
         Preset::Speed => vec![
             OsString::from("-c:v"),
-            OsString::from("libx264"),
+            OsString::from(codec),
             OsString::from("-preset"),
             OsString::from("veryfast"),
             OsString::from("-crf"),

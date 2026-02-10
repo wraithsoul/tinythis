@@ -13,6 +13,7 @@ pub struct App {
     should_quit: bool,
     screen: Screen,
     preset: Preset,
+    use_gpu: bool,
     files: Vec<SelectedFile>,
     review_selected: Option<usize>,
     seen: std::collections::HashSet<String>,
@@ -36,6 +37,7 @@ impl App {
             should_quit: false,
             screen: Screen::Landing,
             preset: Preset::Balanced,
+            use_gpu: false,
             files: Vec::new(),
             review_selected: None,
             seen: std::collections::HashSet::new(),
@@ -65,6 +67,10 @@ impl App {
 
     pub fn files(&self) -> &[SelectedFile] {
         &self.files
+    }
+
+    pub fn use_gpu(&self) -> bool {
+        self.use_gpu
     }
 
     pub fn review_selected(&self) -> Option<usize> {
@@ -142,6 +148,14 @@ impl App {
             Preset::Balanced => Preset::Quality,
             Preset::Speed => Preset::Balanced,
         };
+    }
+
+    pub fn set_use_gpu(&mut self, use_gpu: bool) {
+        self.use_gpu = use_gpu;
+    }
+
+    pub fn toggle_use_gpu(&mut self) {
+        self.use_gpu = !self.use_gpu;
     }
 
     pub fn add_paths(&mut self, paths: Vec<PathBuf>) {

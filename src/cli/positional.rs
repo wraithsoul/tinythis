@@ -18,7 +18,12 @@ pub fn run(preset: Preset, inputs: &[PathBuf]) -> Result<()> {
 
     for (i, input) in inputs.iter().enumerate() {
         let out_path = crate::exec::compress::build_output_path(input, preset)?;
-        let mut args = crate::exec::compress::build_ffmpeg_args(input, &out_path, preset);
+        let mut args = crate::exec::compress::build_ffmpeg_args(
+            input,
+            &out_path,
+            preset,
+            crate::prefs::gpu_enabled()?,
+        );
         args.extend([OsString::from("-progress"), OsString::from("pipe:1")]);
 
         println!(

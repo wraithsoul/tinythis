@@ -219,6 +219,11 @@ fn draw_review(frame: &mut Frame, app: &App) {
     ));
     lines.push(Line::raw(""));
     lines.push(Line::styled(
+        format!("[{}] use gpu (g)", if app.use_gpu() { "x" } else { " " }),
+        Style::default().fg(Color::White),
+    ));
+    lines.push(Line::raw(""));
+    lines.push(Line::styled(
         "compress! (enter)",
         Style::default().fg(Color::White),
     ));
