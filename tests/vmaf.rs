@@ -68,76 +68,52 @@ fn local_appdata_dir() -> Option<PathBuf> {
     std::env::var_os("LOCALAPPDATA").map(PathBuf::from)
 }
 
-fn find_ffmpeg_exe() -> PathBuf {
+fn try_find_ffmpeg_exe() -> Option<PathBuf> {
     let tests = tests_dir();
     let tests_ffmpeg = tests.join("ffmpeg.exe");
     if tests_ffmpeg.is_file() {
-        return tests_ffmpeg;
+        return Some(tests_ffmpeg);
     }
 
     if let Some(p) = std::env::var_os("TINYTHIS_TEST_FFMPEG") {
         let p = PathBuf::from(p);
         if p.is_file() {
-            return p;
+            return Some(p);
         }
     }
 
     if let Some(local) = local_appdata_dir() {
         let installed = local.join("tinythis").join("ffmpeg").join("ffmpeg.exe");
         if installed.is_file() {
-            return installed;
+            return Some(installed);
         }
     }
 
-    let listing = fs::read_dir(&tests)
-        .ok()
-        .into_iter()
-        .flatten()
-        .filter_map(|e| e.ok())
-        .filter_map(|e| e.file_name().into_string().ok())
-        .collect::<Vec<_>>()
-        .join(", ");
-
-    panic!(
-        "ffmpeg.exe not found. put tests/ffmpeg.exe next to tests/vmaf.rs, or set TINYTHIS_TEST_FFMPEG to an ffmpeg.exe path, or run `tinythis setup` to install into LOCALAPPDATA.\ncurrent tests/=[{}]",
-        listing
-    );
+    None
 }
 
-fn find_ffprobe_exe() -> PathBuf {
+fn try_find_ffprobe_exe() -> Option<PathBuf> {
     let tests = tests_dir();
     let tests_ffprobe = tests.join("ffprobe.exe");
     if tests_ffprobe.is_file() {
-        return tests_ffprobe;
+        return Some(tests_ffprobe);
     }
 
     if let Some(p) = std::env::var_os("TINYTHIS_TEST_FFPROBE") {
         let p = PathBuf::from(p);
         if p.is_file() {
-            return p;
+            return Some(p);
         }
     }
 
     if let Some(local) = local_appdata_dir() {
         let installed = local.join("tinythis").join("ffmpeg").join("ffprobe.exe");
         if installed.is_file() {
-            return installed;
+            return Some(installed);
         }
     }
 
-    let listing = fs::read_dir(&tests)
-        .ok()
-        .into_iter()
-        .flatten()
-        .filter_map(|e| e.ok())
-        .filter_map(|e| e.file_name().into_string().ok())
-        .collect::<Vec<_>>()
-        .join(", ");
-
-    panic!(
-        "ffprobe.exe not found. put tests/ffprobe.exe next to tests/vmaf.rs, or set TINYTHIS_TEST_FFPROBE to an ffprobe.exe path, or run `tinythis setup` to install into LOCALAPPDATA.\ncurrent tests/=[{}]",
-        listing
-    );
+    None
 }
 
 fn is_supported_input_ext(ext: &OsStr) -> bool {
@@ -147,14 +123,14 @@ fn is_supported_input_ext(ext: &OsStr) -> bool {
     )
 }
 
-fn find_input_video_file() -> PathBuf {
+fn try_find_input_video_file() -> Option<PathBuf> {
     let dir = tests_dir();
 
-    let preferred = ["input.mp4"];
+    let preferred = ["input.mp4", "dummy.mp4", "test.mp4"];
     for name in preferred {
         let p = dir.join(name);
         if p.is_file() {
-            return p;
+            return Some(p);
         }
     }
 
@@ -188,11 +164,7 @@ fn find_input_video_file() -> PathBuf {
     }
 
     candidates.sort_by_key(|(size, _)| *size);
-    candidates
-        .into_iter()
-        .next()
-        .map(|(_, p)| p)
-        .unwrap_or_else(|| panic!("no input video found in tests/ (expected one of: mp4/mov/m4v/mkv/webm/avi)"))
+    candidates.into_iter().next().map(|(_, p)| p)
 }
 
 fn hardlink_or_copy(src: &Path, dst: &Path) {
@@ -299,13 +271,7 @@ fn probe_r_frame_rate(ffprobe: &Path, dir: &Path, input: &Path) -> String {
         .unwrap_or_else(|| panic!("ffprobe json missing streams[0].r_frame_rate"))
 }
 
-fn run_vmaf(
-    ffmpeg: &Path,
-    case_dir: &Path,
-    fps: &str,
-    reference: &Path,
-    distorted: &Path,
-) -> f64 {
+fn run_vmaf(ffmpeg: &Path, case_dir: &Path, fps: &str, reference: &Path, distorted: &Path) -> f64 {
     let json = case_dir.join("vmaf.json");
     let filter_complex = format!(
         "[0:v]setpts=PTS-STARTPTS,fps={fps},format=yuv420p[ref];\
@@ -349,8 +315,30 @@ fn run_vmaf(
 }
 
 #[test]
+#[ignore = "requires ffmpeg/ffprobe and an input video; run with `cargo test --test vmaf -- --ignored --show-output`"]
 fn vmaf_cpu_gpu_quality_balanced_speed() {
-    let input_src = find_input_video_file();
+    let input_src = if let Some(p) = std::env::var_os("TINYTHIS_TEST_INPUT") {
+        let p = PathBuf::from(p);
+        if p.is_file() {
+            Some(p)
+        } else {
+            println!(
+                "skipping vmaf test: TINYTHIS_TEST_INPUT is set but not a file: {}",
+                p.display()
+            );
+            return;
+        }
+    } else {
+        try_find_input_video_file()
+    };
+
+    let Some(input_src) = input_src else {
+        println!(
+            "skipping vmaf test: no input video found in tests/ (expected one of: mp4/mov/m4v/mkv/webm/avi). You can also set TINYTHIS_TEST_INPUT to an input file path."
+        );
+        return;
+    };
+
     let input_name = input_src.file_name().and_then(|s| s.to_str()).unwrap();
 
     let target = repo_root().join("target");
@@ -366,11 +354,21 @@ fn vmaf_cpu_gpu_quality_balanced_speed() {
     let tinythis = bin_dir.join("tinythis.exe");
     fs::copy(&tinythis_src, &tinythis).expect("copy tinythis.exe");
 
-    let ffmpeg_src = find_ffmpeg_exe();
+    let Some(ffmpeg_src) = try_find_ffmpeg_exe() else {
+        println!(
+            "skipping vmaf test: ffmpeg.exe not found (put tests/ffmpeg.exe, set TINYTHIS_TEST_FFMPEG, or run `tinythis setup`)"
+        );
+        return;
+    };
     let ffmpeg = bin_dir.join("ffmpeg.exe");
     hardlink_or_copy(&ffmpeg_src, &ffmpeg);
 
-    let ffprobe_src = find_ffprobe_exe();
+    let Some(ffprobe_src) = try_find_ffprobe_exe() else {
+        println!(
+            "skipping vmaf test: ffprobe.exe not found (put tests/ffprobe.exe, set TINYTHIS_TEST_FFPROBE, or run `tinythis setup`)"
+        );
+        return;
+    };
     let ffprobe = bin_dir.join("ffprobe.exe");
     hardlink_or_copy(&ffprobe_src, &ffprobe);
 
