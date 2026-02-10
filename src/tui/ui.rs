@@ -134,7 +134,7 @@ fn draw_landing(frame: &mut Frame, app: &App) {
 fn draw_review(frame: &mut Frame, app: &App) {
     let area = frame.area();
 
-    let reserved = 8u16;
+    let reserved = 9u16;
     let max_files = area.height.saturating_sub(reserved).max(1) as usize;
 
     let mut lines = Vec::<Line>::new();
@@ -217,6 +217,14 @@ fn draw_review(frame: &mut Frame, app: &App) {
         "use \u{2190} \u{2192} arrows to change mode",
         Style::default().fg(Color::Gray),
     ));
+
+    lines.push(Line::raw(""));
+    let gpu = if app.use_gpu() { "[x]" } else { "[ ]" };
+    lines.push(Line::styled(
+        format!("{gpu} use gpu (g)"),
+        Style::default().fg(Color::White),
+    ));
+
     lines.push(Line::raw(""));
     lines.push(Line::styled(
         "compress! (enter)",

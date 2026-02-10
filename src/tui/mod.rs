@@ -12,6 +12,10 @@ use crate::error::Result;
 pub fn run(initial_status: Option<String>) -> Result<()> {
     let mut app = app::App::new();
     app.set_status_message(initial_status);
+
+    let opts = crate::options::load()?;
+    app.set_use_gpu(opts.gpu);
+
     preflight_ffmpeg(&mut app)?;
 
     let mut session = terminal::TerminalSession::enter()?;
@@ -117,6 +121,16 @@ fn handle_key(
             app.remove_selected_file()
         }
 
+        KeyCode::Char('g') | KeyCode::Char('G') | KeyCode::Char('п') | KeyCode::Char('П')
+            if matches!(app.screen(), app::Screen::Review) =>
+        {
+            let v = app.toggle_use_gpu();
+            if let Err(e) = crate::options::set_gpu(v) {
+                app.set_error(format!("{e}"));
+                app.set_screen(app::Screen::Error);
+            }
+        }
+
         KeyCode::Char('u') | KeyCode::Char('U')
             if matches!(app.screen(), app::Screen::Landing | app::Screen::Review) =>
         {
@@ -182,12 +196,13 @@ fn handle_key(
 
             let files: Vec<crate::exec::compress::SelectedFile> = app.files().to_vec();
             let preset = app.preset();
+            let use_gpu = app.use_gpu();
 
             let (tx, rx) = std::sync::mpsc::channel::<app::WorkerMsg>();
             app.set_worker(rx, files.len());
 
             std::thread::spawn(move || {
-                run_worker(tx, bins.ffmpeg, files, preset);
+                run_worker(tx, bins.ffmpeg, files, preset, use_gpu);
             });
         }
 
@@ -276,6 +291,7 @@ fn run_worker(
     ffmpeg: std::path::PathBuf,
     files: Vec<crate::exec::compress::SelectedFile>,
     preset: crate::presets::Preset,
+    use_gpu: bool,
 ) {
     let total = files.len();
     for (i, f) in files.into_iter().enumerate() {
@@ -292,7 +308,8 @@ fn run_worker(
 
         let res: crate::error::Result<()> = (|| {
             let out_path = crate::exec::compress::build_output_path(&f.path, preset)?;
-            let args = crate::exec::compress::build_ffmpeg_args(&f.path, &out_path, preset);
+            let args =
+                crate::exec::compress::build_ffmpeg_args(&f.path, &out_path, preset, use_gpu);
             let mut args = args;
             args.extend([
                 std::ffi::OsString::from("-progress"),
