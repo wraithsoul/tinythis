@@ -38,7 +38,12 @@ pub fn build_output_path(input: &Path, preset: Preset) -> Result<PathBuf> {
     unreachable!("the loop returns once it finds a free name")
 }
 
-pub fn build_ffmpeg_args(input: &Path, output: &Path, preset: Preset) -> Vec<OsString> {
+pub fn build_ffmpeg_args(
+    input: &Path,
+    output: &Path,
+    preset: Preset,
+    use_gpu: bool,
+) -> Vec<OsString> {
     let mut args = Vec::<OsString>::new();
 
     args.extend([
@@ -54,7 +59,7 @@ pub fn build_ffmpeg_args(input: &Path, output: &Path, preset: Preset) -> Vec<OsS
         OsString::from("0:a?"),
     ]);
 
-    args.extend(crate::presets::ffmpeg_video_args(preset));
+    args.extend(crate::presets::ffmpeg_video_args(preset, use_gpu));
 
     args.extend([
         OsString::from("-pix_fmt"),
@@ -243,6 +248,31 @@ fn parse_hhmmss_to_us(s: &str) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ffmpeg_args_selects_codec_based_on_gpu_flag() {
+        let input = Path::new("C:\\in.mp4");
+        let output = Path::new("C:\\out.mp4");
+
+        let cpu = build_ffmpeg_args(input, output, Preset::Balanced, false);
+        let cpu_s = cpu
+            .iter()
+            .map(|v| v.to_string_lossy().into_owned())
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(cpu_s.contains("libx264"));
+        assert!(cpu_s.contains(" -crf "));
+        assert!(!cpu_s.contains("h264_nvenc"));
+
+        let gpu = build_ffmpeg_args(input, output, Preset::Balanced, true);
+        let gpu_s = gpu
+            .iter()
+            .map(|v| v.to_string_lossy().into_owned())
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(gpu_s.contains("h264_nvenc"));
+        assert!(!gpu_s.contains(" -crf "));
+    }
 
     #[test]
     fn parses_duration_us_from_stderr() {

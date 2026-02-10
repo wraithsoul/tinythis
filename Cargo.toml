@@ -1,6 +1,6 @@
 [package]
 name = "tinythis"
-version = "0.0.3"
+version = "0.0.4"
 edition = "2024"
 
 [dependencies]
@@ -26,3 +26,6 @@ codegen-units = 1
 panic = "abort"
 strip = "symbols"
 debug = 0
+
+[dev-dependencies]
+serde_json = "1.0.139"

@@ -3,6 +3,7 @@ mod cli;
 mod confirm;
 mod error;
 mod exec;
+mod options;
 mod paths;
 mod prefs;
 mod presets;
@@ -28,11 +29,16 @@ fn real_main() -> crate::error::Result<()> {
     let cli = crate::cli::Cli::parse();
 
     if !cli.inputs.is_empty() {
+        if cli.command.is_some() {
+            return Err(crate::error::TinythisError::InvalidArgs(
+                "cannot combine positional inputs with a subcommand".to_string(),
+            ));
+        }
         return crate::cli::run_positional(&cli);
     }
 
     match cli.command {
-        Some(command) => crate::cli::run(command),
+        Some(command) => crate::cli::run(cli.gpu, cli.cpu, command),
         None => {
             let mut initial_status: Option<String> = None;
             if cfg!(windows) {

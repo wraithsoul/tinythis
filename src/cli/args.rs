@@ -16,13 +16,20 @@ fn parse_supported_input(s: &str) -> std::result::Result<PathBuf, String> {
     name = "tinythis",
     version,
     about = "tinythis! - a lightweight ffmpeg wrapper",
-    args_conflicts_with_subcommands = true,
     subcommand_precedence_over_arg = true
 )]
 pub struct Cli {
     /// input files to compress (when no subcommand is used)
     #[arg(value_name = "INPUT", value_parser = parse_supported_input)]
     pub inputs: Vec<PathBuf>,
+
+    /// use gpu encoder for cli compression, overriding options.toml
+    #[arg(long, global = true, conflicts_with = "cpu")]
+    pub gpu: bool,
+
+    /// force cpu encoder for cli compression, overriding options.toml
+    #[arg(long, global = true, conflicts_with = "gpu")]
+    pub cpu: bool,
 
     #[command(subcommand)]
     pub command: Option<Command>,
@@ -171,7 +178,26 @@ mod tests {
     }
 
     #[test]
-    fn rejects_positional_inputs_with_subcommand() {
-        assert!(Cli::try_parse_from(["tinythis", "a.mp4", "setup"]).is_err());
+    fn parses_positional_inputs_with_subcommand_but_runtime_should_reject() {
+        let cli = Cli::try_parse_from(["tinythis", "a.mp4", "setup"]).unwrap();
+        assert_eq!(cli.inputs, vec![PathBuf::from("a.mp4")]);
+        assert!(matches!(cli.command, Some(Command::Setup(_))));
+    }
+
+    #[test]
+    fn parses_gpu_override_flags() {
+        let cli = Cli::try_parse_from(["tinythis", "--gpu", "balanced", "a.mp4"]).unwrap();
+        assert!(cli.gpu);
+        assert!(!cli.cpu);
+        assert!(cli.inputs.is_empty());
+        assert!(matches!(cli.command, Some(Command::Balanced(_))));
+
+        let cli = Cli::try_parse_from(["tinythis", "--cpu", "a.mp4"]).unwrap();
+        assert!(!cli.gpu);
+        assert!(cli.cpu);
+        assert!(cli.command.is_none());
+        assert_eq!(cli.inputs, vec![PathBuf::from("a.mp4")]);
+
+        assert!(Cli::try_parse_from(["tinythis", "--gpu", "--cpu", "a.mp4"]).is_err());
     }
 }
