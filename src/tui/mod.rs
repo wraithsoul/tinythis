@@ -2,6 +2,7 @@ mod app;
 mod terminal;
 mod ui;
 
+use std::path::PathBuf;
 use std::time::Duration;
 use std::time::Instant;
 
@@ -31,10 +32,25 @@ pub fn run(initial_status: Option<String>) -> Result<()> {
     });
     let tick_rate = Duration::from_millis(80);
     let mut last_tick = Instant::now();
+    let mut drop_text = DropTextCollector::new();
 
     while !app.should_quit() {
         app.drain_worker();
         app.drain_update();
+        if !screen_allows_drop_text(app.screen()) {
+            for replay in drop_text.take_replay_keys() {
+                handle_key(&mut session, &mut app, replay)?;
+            }
+            drop_text.clear_text();
+        }
+
+        for replay in drop_text.take_stale_pending_drive() {
+            handle_key(&mut session, &mut app, replay)?;
+        }
+        if let Some(paths) = drop_text.take_stale_paths() {
+            app.add_paths(paths);
+        }
+
         if last_tick.elapsed() >= tick_rate {
             app.advance_spinner();
             last_tick = Instant::now();
@@ -44,14 +60,38 @@ pub fn run(initial_status: Option<String>) -> Result<()> {
 
         let timeout = tick_rate.saturating_sub(last_tick.elapsed());
         if !event::poll(timeout)? {
+            for replay in drop_text.take_stale_pending_drive() {
+                handle_key(&mut session, &mut app, replay)?;
+            }
+            if let Some(paths) = drop_text.take_stale_paths() {
+                app.add_paths(paths);
+            }
             continue;
         }
 
         match event::read()? {
             Event::Key(key) if key.kind == KeyEventKind::Press => {
-                handle_key(&mut session, &mut app, key)?
+                if screen_allows_drop_text(app.screen())
+                    && !key.modifiers.contains(KeyModifiers::CONTROL)
+                    && !key.modifiers.contains(KeyModifiers::ALT)
+                {
+                    let replay = drop_text.consume_key(key);
+                    for key in replay {
+                        handle_key(&mut session, &mut app, key)?;
+                    }
+                    if let Some(paths) = drop_text.take_ready_paths() {
+                        app.add_paths(paths);
+                    }
+                } else {
+                    for replay in drop_text.take_replay_keys() {
+                        handle_key(&mut session, &mut app, replay)?;
+                    }
+                    drop_text.clear_text();
+                    handle_key(&mut session, &mut app, key)?;
+                }
             }
             Event::Paste(text) => {
+                drop_text.clear();
                 let paths = parse_paste_paths(&text);
                 app.add_paths(paths);
             }
@@ -102,8 +142,9 @@ fn handle_key(
         },
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => app.quit(),
 
-        KeyCode::Char('s') | KeyCode::Char('S') | KeyCode::Char('ы') | KeyCode::Char('Ы')
-            if matches!(app.screen(), app::Screen::Landing | app::Screen::Review) =>
+        KeyCode::Char('o')
+            if key.modifiers.contains(KeyModifiers::CONTROL)
+                && matches!(app.screen(), app::Screen::Landing | app::Screen::Review) =>
         {
             let picked = session.suspend_keep_screen(pick_files)?;
             if picked.is_empty() {
@@ -258,6 +299,176 @@ fn push_token(out: &mut Vec<std::path::PathBuf>, buf: &mut String) {
     buf.clear();
 }
 
+fn screen_allows_drop_text(screen: app::Screen) -> bool {
+    matches!(screen, app::Screen::Landing | app::Screen::Review)
+}
+
+#[derive(Debug)]
+struct DropTextCollector {
+    text_buf: String,
+    ready_paths: Vec<PathBuf>,
+    pending_drive: Option<PendingDrive>,
+    in_quotes: bool,
+    last_input_at: Option<Instant>,
+}
+
+#[derive(Debug)]
+struct PendingDrive {
+    key: KeyEvent,
+    at: Instant,
+}
+
+impl DropTextCollector {
+    const INPUT_IDLE_FLUSH: Duration = Duration::from_millis(120);
+    const DRIVE_PROBE_TIMEOUT: Duration = Duration::from_millis(120);
+
+    fn new() -> Self {
+        Self {
+            text_buf: String::new(),
+            ready_paths: Vec::new(),
+            pending_drive: None,
+            in_quotes: false,
+            last_input_at: None,
+        }
+    }
+
+    fn clear(&mut self) {
+        self.text_buf.clear();
+        self.ready_paths.clear();
+        self.pending_drive = None;
+        self.in_quotes = false;
+        self.last_input_at = None;
+    }
+
+    fn clear_text(&mut self) {
+        self.text_buf.clear();
+        self.in_quotes = false;
+        self.last_input_at = None;
+    }
+
+    fn consume_key(&mut self, key: KeyEvent) -> Vec<KeyEvent> {
+        if let Some(paths) = self.flush_if_separator(key.code) {
+            self.ready_paths.extend(paths);
+            return Vec::new();
+        }
+
+        let mut replay = Vec::<KeyEvent>::new();
+        if let Some(pending) = self.pending_drive.take() {
+            match key.code {
+                KeyCode::Char(':')
+                    if pending.at.elapsed() <= Self::DRIVE_PROBE_TIMEOUT
+                        && matches!(pending.key.code, KeyCode::Char(c) if c.is_ascii_alphabetic()) =>
+                {
+                    if let KeyCode::Char(c) = pending.key.code {
+                        self.text_buf.push(c);
+                        self.text_buf.push(':');
+                        self.last_input_at = Some(Instant::now());
+                        return replay;
+                    }
+                }
+                _ => replay.push(pending.key),
+            }
+        }
+
+        match key.code {
+            KeyCode::Char(c) if self.text_buf.is_empty() && self.is_drive_probe_candidate(c) => {
+                self.pending_drive = Some(PendingDrive {
+                    key,
+                    at: Instant::now(),
+                });
+            }
+            KeyCode::Char(c) if self.text_buf.is_empty() && is_path_prefix_char(c) => {
+                self.push_char(c);
+            }
+            KeyCode::Char(c) if !self.text_buf.is_empty() => {
+                self.push_char(c);
+            }
+            _ => replay.push(key),
+        }
+
+        replay
+    }
+
+    fn take_replay_keys(&mut self) -> Vec<KeyEvent> {
+        let Some(pending) = self.pending_drive.take() else {
+            return Vec::new();
+        };
+        vec![pending.key]
+    }
+
+    fn take_stale_pending_drive(&mut self) -> Vec<KeyEvent> {
+        let Some(pending) = self.pending_drive.as_ref() else {
+            return Vec::new();
+        };
+        if pending.at.elapsed() < Self::DRIVE_PROBE_TIMEOUT {
+            return Vec::new();
+        }
+        self.take_replay_keys()
+    }
+
+    fn take_stale_paths(&mut self) -> Option<Vec<PathBuf>> {
+        let last = self.last_input_at?;
+        if last.elapsed() < Self::INPUT_IDLE_FLUSH {
+            return None;
+        }
+        let paths = self.flush_text_into_paths();
+        if paths.is_empty() {
+            return None;
+        }
+        Some(paths)
+    }
+
+    fn take_ready_paths(&mut self) -> Option<Vec<PathBuf>> {
+        if self.ready_paths.is_empty() {
+            return None;
+        }
+        Some(std::mem::take(&mut self.ready_paths))
+    }
+
+    fn flush_if_separator(&mut self, code: KeyCode) -> Option<Vec<PathBuf>> {
+        let is_separator = match code {
+            KeyCode::Enter | KeyCode::Tab => true,
+            KeyCode::Char(c) => c.is_whitespace() && !self.in_quotes,
+            _ => false,
+        };
+        if !is_separator || self.text_buf.is_empty() {
+            return None;
+        }
+        let paths = self.flush_text_into_paths();
+        if paths.is_empty() {
+            return None;
+        }
+        Some(paths)
+    }
+
+    fn flush_text_into_paths(&mut self) -> Vec<PathBuf> {
+        let text = std::mem::take(&mut self.text_buf);
+        self.in_quotes = false;
+        self.last_input_at = None;
+        parse_paste_paths(&text)
+    }
+
+    fn is_drive_probe_candidate(&self, c: char) -> bool {
+        c.is_ascii_alphabetic() && !is_fast_hotkey_char(c)
+    }
+
+    fn push_char(&mut self, c: char) {
+        if c == '"' {
+            self.in_quotes = !self.in_quotes;
+        }
+        self.text_buf.push(c);
+        self.last_input_at = Some(Instant::now());
+    }
+}
+
+fn is_path_prefix_char(c: char) -> bool {
+    matches!(c, '"' | '\\' | '/')
+}
+
+fn is_fast_hotkey_char(c: char) -> bool {
+    matches!(c, 'q' | 'Q' | 'g' | 'G' | 'u' | 'U')
+}
+
 fn percent_decode(s: &str) -> String {
     let bytes = s.as_bytes();
     let mut out = Vec::<u8>::with_capacity(bytes.len());
@@ -355,6 +566,7 @@ fn tail_lines(s: &str, n: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crossterm::event::KeyEventState;
 
     #[test]
     fn parse_paste_paths_handles_quotes_and_spaces() {
@@ -362,5 +574,69 @@ mod tests {
         let paths = parse_paste_paths(s);
         assert_eq!(paths.len(), 3);
         assert_eq!(paths[0].to_string_lossy(), "C:\\a b\\c.mp4");
+    }
+
+    #[test]
+    fn parse_paste_paths_handles_single_windows_path() {
+        let s = "C:\\Users\\Administrator\\Downloads\\1.mp4";
+        let paths = parse_paste_paths(s);
+        assert_eq!(paths, vec![PathBuf::from(s)]);
+    }
+
+    #[test]
+    fn parse_paste_paths_handles_file_uri() {
+        let s = "file:///C:/Users/Administrator/Downloads/a%20b.mp4";
+        let paths = parse_paste_paths(s);
+        assert_eq!(
+            paths,
+            vec![PathBuf::from(
+                "C:\\Users\\Administrator\\Downloads\\a b.mp4"
+            )]
+        );
+    }
+
+    #[test]
+    fn drop_text_collector_flushes_drive_path_on_separator() {
+        let mut c = DropTextCollector::new();
+        for key in [
+            key('C'),
+            key(':'),
+            key('\\'),
+            key('a'),
+            key('\\'),
+            key('b'),
+            key('.'),
+            key('m'),
+            key('p'),
+            key('4'),
+            key(' '),
+        ] {
+            let replay = c.consume_key(key);
+            assert!(replay.is_empty());
+        }
+
+        let out = c.take_ready_paths().unwrap();
+        assert_eq!(out, vec![PathBuf::from("C:\\a\\b.mp4")]);
+    }
+
+    #[test]
+    fn drop_text_collector_replays_non_path_key() {
+        let mut c = DropTextCollector::new();
+        let replay = c.consume_key(key('x'));
+        assert!(replay.is_empty());
+
+        std::thread::sleep(DropTextCollector::DRIVE_PROBE_TIMEOUT + Duration::from_millis(5));
+        let replay = c.take_stale_pending_drive();
+        assert_eq!(replay.len(), 1);
+        assert_eq!(replay[0].code, KeyCode::Char('x'));
+    }
+
+    fn key(c: char) -> KeyEvent {
+        KeyEvent {
+            code: KeyCode::Char(c),
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        }
     }
 }

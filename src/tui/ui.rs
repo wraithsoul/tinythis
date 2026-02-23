@@ -100,7 +100,7 @@ fn draw_landing(frame: &mut Frame, app: &App) {
     let mut lines: Vec<Line> = ascii_lines.collect();
 
     lines.push(Line::styled(
-        "select files (s: dialog)",
+        "select files (ctrl+o: dialog)",
         Style::default().fg(Color::White),
     ));
     lines.push(Line::styled(
@@ -187,7 +187,7 @@ fn draw_review(frame: &mut Frame, app: &App) {
     }
 
     lines.push(Line::styled(
-        "- add files (s)",
+        "- add files (ctrl+o)",
         Style::default().fg(Color::Gray),
     ));
 
